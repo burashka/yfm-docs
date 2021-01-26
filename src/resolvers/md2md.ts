@@ -1,12 +1,14 @@
-import {readFileSync, writeFileSync} from 'fs';
 import {basename, dirname, join, resolve} from 'path';
 import shell from 'shelljs';
+import {default as fsWithCallbacks, writeFileSync, readFileSync} from 'fs';
 
 import log, {Logger} from '@doc-tools/transform/lib/log';
 import liquid from '@doc-tools/transform/lib/liquid';
 
 import {ArgvService, PresetService} from '../services';
 import {getPlugins} from '../utils';
+
+const fs = fsWithCallbacks.promises;
 
 function transformMd2Md(input: string, options: ResolverOptions) {
     const {applyPresets, resolveConditions} = ArgvService.getConfig();
@@ -74,10 +76,10 @@ function makeCollectOfPlugins(plugins: Plugin[]) {
  * @param outputPath
  * @return {string}
  */
-export function resolveMd2Md(inputPath: string, outputPath: string): string {
+export async function resolveMd2Md(inputPath: string, outputPath: string): Promise<string> {
     const {input, output, vars} = ArgvService.getConfig();
     const resolvedInputPath = resolve(input, inputPath);
-    const content: string = readFileSync(resolvedInputPath, 'utf8');
+    const content: string = await fs.readFile(resolvedInputPath, 'utf8');
 
     const plugins = getPlugins();
     const collectOfPlugins = makeCollectOfPlugins(plugins);

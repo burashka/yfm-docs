@@ -1,5 +1,5 @@
 import {dirname, join, parse, resolve} from 'path';
-import {copyFileSync, readFileSync, writeFileSync} from 'fs';
+import {default as fsWithCallbacks} from 'fs';
 import {load, dump} from 'js-yaml';
 import shell from 'shelljs';
 import walkSync from 'walk-sync';
@@ -13,10 +13,12 @@ import {Stage} from '../constants';
 import {isExternalHref} from '../utils';
 import {filterFiles} from './utils';
 
+const fs = fsWithCallbacks.promises;
+
 const storage: Map<string, YfmToc> = new Map();
 const navigationPaths: string[] = [];
 
-function add(path: string) {
+async function add(path: string) {
     const {
         input: inputFolderPath,
         output: outputFolderPath,
@@ -25,7 +27,7 @@ function add(path: string) {
     } = ArgvService.getConfig();
 
     const pathToDir = dirname(path);
-    const content = readFileSync(resolve(inputFolderPath, path), 'utf8');
+    const content = await fs.readFile(resolve(inputFolderPath, path), 'utf8');
     const parsedToc = load(content) as YfmToc;
 
     // Should ignore toc with specified stage.
@@ -45,7 +47,7 @@ function add(path: string) {
     }
 
     /* Should resolve all includes */
-    parsedToc.items = _replaceIncludes(parsedToc.items, join(input, pathToDir), resolve(input), combinedVars);
+    parsedToc.items = await _replaceIncludes(parsedToc.items, join(input, pathToDir), resolve(input), combinedVars);
 
     /* Should remove all links with false expressions */
     try {
@@ -59,7 +61,7 @@ function add(path: string) {
         const outputPath = resolve(outputFolderPath, path);
         const outputToc = dump(parsedToc);
         shell.mkdir('-p', dirname(outputPath));
-        writeFileSync(outputPath, outputToc);
+        await fs.writeFile(outputPath, outputToc);
     }
 
     /* Store parsed toc for .md output format */
@@ -131,20 +133,23 @@ function _normalizeHref(href: string): string {
  * @return
  * @private
  */
-function _copyTocDir(tocPath: string, destDir: string) {
+async function _copyTocDir(tocPath: string, destDir: string) {
     const {dir: tocDir} = parse(tocPath);
     const files: string[] = walkSync(tocDir, {
         globs: ['**/*.*'],
         ignore: ['**/toc.yaml'],
     });
 
-    files.forEach((relPath) => {
-        const from = resolve(tocDir, relPath);
-        const to = resolve(destDir, relPath);
+    await Promise.all(
+        files.map((relPath) => {
+            const from = resolve(tocDir, relPath);
+            const to = resolve(destDir, relPath);
 
-        shell.mkdir('-p', parse(to).dir);
-        copyFileSync(from, to);
-    });
+            shell.mkdir('-p', parse(to).dir);
+
+            return fs.copyFile(from, to);
+        }),
+    );
 }
 
 /**
@@ -176,42 +181,50 @@ function _liquidSubstitutions(input: string, vars: Record<string, string>, path:
  * @return
  * @private
  */
-function _replaceIncludes(items: YfmToc[], tocDir: string, sourcesDir: string, vars: Record<string, string>) {
-    return items.reduce((acc, item) => {
-        if (item.name) {
-            const tocPath = join(tocDir, 'toc.yaml');
+async function _replaceIncludes(items: YfmToc[], tocDir: string, sourcesDir: string, vars: Record<string, string>) {
+    const acc: YfmToc[] = [];
 
-            item.name = _liquidSubstitutions(item.name, vars, tocPath);
-        }
+    await Promise.all(
+        items.map(async (item) => {
+            if (item.name) {
+                const tocPath = join(tocDir, 'toc.yaml');
 
-        if (item.include) {
-            const {path} = item.include;
-            const includeTocPath = resolve(sourcesDir, path);
-
-            try {
-                const includeToc = load(readFileSync(includeTocPath, 'utf8')) as YfmToc;
-
-                // Should ignore included toc with tech-preview stage.
-                if (includeToc.stage === Stage.TECH_PREVIEW) {
-                    return acc;
-                }
-
-                _copyTocDir(includeTocPath, tocDir);
-                item.items = (item.items || []).concat(includeToc.items);
-            } catch (err) {
-                log.error(`Error while including toc: ${bold(includeTocPath)} to ${bold(join(tocDir, 'toc.yaml'))}`);
-                return acc;
-            } finally {
-                delete item.include;
+                item.name = _liquidSubstitutions(item.name, vars, tocPath);
             }
-        }
 
-        if (item.items) {
-            item.items = _replaceIncludes(item.items, tocDir, sourcesDir, vars);
-        }
+            if (item.include) {
+                const {path} = item.include;
+                const includeTocPath = resolve(sourcesDir, path);
 
-        return acc.concat(item);
-    }, [] as YfmToc[]);
+                try {
+                    const includeToc = load(await fs.readFile(includeTocPath, 'utf8')) as YfmToc;
+
+                    // Should ignore included toc with tech-preview stage.
+                    if (includeToc.stage === Stage.TECH_PREVIEW) {
+                        return;
+                    }
+
+                    await _copyTocDir(includeTocPath, tocDir);
+                    item.items = (item.items || []).concat(includeToc.items);
+                } catch (err) {
+                    log.error(
+                        `Error while including toc: ${bold(includeTocPath)} to ${bold(join(tocDir, 'toc.yaml'))}`,
+                    );
+                    return;
+                } finally {
+                    delete item.include;
+                }
+            }
+
+            if (item.items) {
+                item.items = await _replaceIncludes(item.items, tocDir, sourcesDir, vars);
+            }
+
+            acc.push(item);
+        }),
+    );
+
+    return acc;
 }
 
 export default {

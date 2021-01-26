@@ -85,66 +85,70 @@ const _yargs = yargs
     .version(VERSION)
     .help();
 
-console.time(MAIN_TIMER_ID);
+const main = async () => {
+    console.time(MAIN_TIMER_ID);
 
-const pathToConfig = _yargs.argv.config || join(_yargs.argv.input, '.yfm');
+    const pathToConfig = _yargs.argv.config || join(_yargs.argv.input, '.yfm');
 
-/* Create user' output folder if doesn't exists */
-const userOutputFolder = resolve(_yargs.argv.output);
-shell.mkdir('-p', userOutputFolder);
+    /* Create user' output folder if doesn't exists */
+    const userOutputFolder = resolve(_yargs.argv.output);
+    shell.mkdir('-p', userOutputFolder);
 
-/* Create temporary input/output folders */
-const tmpInputFolder = resolve(_yargs.argv.output, TMP_INPUT_FOLDER);
-const tmpOutputFolder = resolve(_yargs.argv.output, TMP_OUTPUT_FOLDER);
-shell.rm('-rf', tmpInputFolder, tmpOutputFolder);
-shell.mkdir(tmpInputFolder, tmpOutputFolder);
+    /* Create temporary input/output folders */
+    const tmpInputFolder = resolve(_yargs.argv.output, TMP_INPUT_FOLDER);
+    const tmpOutputFolder = resolve(_yargs.argv.output, TMP_OUTPUT_FOLDER);
+    shell.rm('-rf', tmpInputFolder, tmpOutputFolder);
+    shell.mkdir(tmpInputFolder, tmpOutputFolder);
 
-/*
- * Copy all user' files to the temporary folder to avoid user' file changing.
- * Please, change files only in temporary folders.
- */
-shell.cp('-r', resolve(_yargs.argv.input, '*'), tmpInputFolder);
-shell.chmod('-R', 'u+w', tmpInputFolder);
+    /*
+     * Copy all user' files to the temporary folder to avoid user' file changing.
+     * Please, change files only in temporary folders.
+     */
+    shell.cp('-r', resolve(_yargs.argv.input, '*'), tmpInputFolder);
+    shell.chmod('-R', 'u+w', tmpInputFolder);
 
-ArgvService.init({
-    ..._yargs.argv,
-    input: tmpInputFolder,
-    output: tmpOutputFolder,
-});
+    ArgvService.init({
+        ..._yargs.argv,
+        input: tmpInputFolder,
+        output: tmpOutputFolder,
+    });
 
-const {
-    output: outputFolderPath,
-    outputFormat,
-    publish,
-} = ArgvService.getConfig();
+    const {
+        output: outputFolderPath,
+        outputFormat,
+        publish,
+    } = ArgvService.getConfig();
 
-const outputBundlePath: string = join(outputFolderPath, BUNDLE_FOLDER);
+    const outputBundlePath: string = join(outputFolderPath, BUNDLE_FOLDER);
 
-processServiceFiles();
+    await processServiceFiles();
 
-processExcludedFiles();
+    processExcludedFiles();
 
-processPages(tmpInputFolder, outputBundlePath);
+    await processPages(tmpInputFolder, outputBundlePath);
 
-/* Should copy all assets only when running --output-format=html */
-if (outputFormat === 'html') {
-    processAssets(outputBundlePath);
-}
+    /* Should copy all assets only when running --output-format=html */
+    if (outputFormat === 'html') {
+        processAssets(outputBundlePath);
+    }
 
-/* Copy all generated files to user' output folder */
-shell.cp('-r', join(tmpOutputFolder, '*'), userOutputFolder);
+    /* Copy all generated files to user' output folder */
+    shell.cp('-r', join(tmpOutputFolder, '*'), userOutputFolder);
 
-/* Copy configuration file */
-if (outputFormat === 'md') {
-    shell.cp('-r', resolve(pathToConfig), userOutputFolder);
-}
+    /* Copy configuration file */
+    if (outputFormat === 'md') {
+        shell.cp('-r', resolve(pathToConfig), userOutputFolder);
+    }
 
-/* Upload output files to S3 storage */
-if (publish) {
-    publishFiles();
-}
+    /* Upload output files to S3 storage */
+    if (publish) {
+        await publishFiles();
+    }
 
-/* Remove temporary folders */
-shell.rm('-rf', tmpInputFolder, tmpOutputFolder);
+    /* Remove temporary folders */
+    shell.rm('-rf', tmpInputFolder, tmpOutputFolder);
 
-processLogs(tmpInputFolder);
+    processLogs(tmpInputFolder);
+};
+
+main();

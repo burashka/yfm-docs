@@ -1,6 +1,6 @@
 import {basename, dirname, join, relative, resolve} from 'path';
-import {readFileSync} from 'fs';
 import yaml from 'js-yaml';
+import {default as fsWithCallbacks} from 'fs';
 
 import transform, {Output} from '@doc-tools/transform';
 import log from '@doc-tools/transform/lib/log';
@@ -9,19 +9,21 @@ import {YfmToc} from '../models';
 import {ArgvService, PresetService, TocService} from '../services';
 import {generateStaticMarkup, getPlugins, ResolverOptions, transformToc} from '../utils';
 
+const fs = fsWithCallbacks.promises;
+
 export interface FileTransformOptions {
     path: string;
     root?: string;
 }
 
 export const FileTransformer: Record<string, Function> = {
-    '.yaml': function ({path}: FileTransformOptions): Object {
+    '.yaml': async function ({path}: FileTransformOptions): Promise<Object> {
         const {input} = ArgvService.getConfig();
         const resolvedPath = resolve(input, path);
         let data = {};
 
         try {
-            const content = readFileSync(resolvedPath, 'utf8');
+            const content = await fs.readFile(resolvedPath, 'utf8');
             data = yaml.load(content) as string;
         } catch {
             log.error('');
@@ -31,10 +33,10 @@ export const FileTransformer: Record<string, Function> = {
             result: {data},
         };
     },
-    '.md': function ({path}: FileTransformOptions): Output {
+    '.md': async function ({path}: FileTransformOptions): Promise<Output> {
         const {input, vars, ...options} = ArgvService.getConfig();
         const resolvedPath: string = resolve(input, path);
-        const content: string = readFileSync(resolvedPath, 'utf8');
+        const content: string = await fs.readFile(resolvedPath, 'utf8');
 
         /* Relative path from folder of .md file to root of user' output folder */
         const assetsPublicPath = relative(dirname(resolvedPath), resolve(input));
@@ -63,7 +65,9 @@ export const FileTransformer: Record<string, Function> = {
  * @param outputBundlePath
  * @return {string}
  */
-export function resolveMd2HTML({inputPath, fileExtension, outputPath, outputBundlePath}: ResolverOptions): string {
+export async function resolveMd2HTML(
+    {inputPath, fileExtension, outputPath, outputBundlePath}: ResolverOptions,
+): Promise<string> {
     const pathToDir: string = dirname(inputPath);
     const toc: YfmToc|null = TocService.getForPath(inputPath) || null;
     const tocBase: string = toc && toc.base ? toc.base : '';
@@ -71,7 +75,7 @@ export function resolveMd2HTML({inputPath, fileExtension, outputPath, outputBund
     const relativePathToIndex = relative(dirname(inputPath), `${tocBase}/`);
 
     const transformFn: Function = FileTransformer[fileExtension];
-    const {result} = transformFn({path: inputPath});
+    const {result} = await transformFn({path: inputPath});
     const props = {
         data: {
             leading: inputPath.endsWith('.yaml'),

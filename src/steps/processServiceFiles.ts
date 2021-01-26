@@ -1,18 +1,20 @@
 import {dirname, resolve} from 'path';
 import walkSync from 'walk-sync';
-import {readFileSync, writeFileSync} from 'fs';
+import {default as fsWithCallbacks} from 'fs';
 import {load, dump} from 'js-yaml';
+import shell from 'shelljs';
 
 import {ArgvService, PresetService, TocService} from '../services';
 import {logger} from '../utils';
 import {DocPreset} from '../models';
-import shell from 'shelljs';
+
+const fs = fsWithCallbacks.promises;
 
 /**
  * Processes services files (like toc.yaml, presets.yaml).
  * @return {void}
  */
-export function processServiceFiles() {
+export async function processServiceFiles() {
     const {
         input: inputFolderPath,
         output: outputFolderPath,
@@ -32,34 +34,38 @@ export function processServiceFiles() {
         ignore,
     });
 
-    for (const path of presetsFilePaths) {
-        logger.proc(path);
 
-        const pathToPresetFile = resolve(inputFolderPath, path);
-        const content = readFileSync(pathToPresetFile, 'utf8');
-        const parsedPreset = load(content) as DocPreset;
+    await Promise.all(
+        presetsFilePaths.map(async (path) => {
+            logger.proc(path);
 
-        PresetService.add(parsedPreset, path, varsPreset);
+            const pathToPresetFile = resolve(inputFolderPath, path);
+            const content = await fs.readFile(pathToPresetFile, 'utf8');
+            const parsedPreset = load(content) as DocPreset;
 
-        if (outputFormat === 'md' && (!applyPresets || !resolveConditions)) {
-            /* Should save filtered presets.yaml only when --apply-presets=false or --resolve-conditions=false */
-            const outputPath = resolve(outputFolderPath, path);
-            const filteredPreset: Record<string, Object> = {
-                default: parsedPreset.default,
-            };
+            PresetService.add(parsedPreset, path, varsPreset);
 
-            if (parsedPreset[varsPreset]) {
-                filteredPreset[varsPreset] = parsedPreset[varsPreset];
+            if (outputFormat === 'md' && (!applyPresets || !resolveConditions)) {
+                /* Should save filtered presets.yaml only when --apply-presets=false or --resolve-conditions=false */
+                const outputPath = resolve(outputFolderPath, path);
+                const filteredPreset: Record<string, Object> = {
+                    default: parsedPreset.default,
+                };
+
+                if (parsedPreset[varsPreset]) {
+                    filteredPreset[varsPreset] = parsedPreset[varsPreset];
+                }
+
+                const outputPreset = dump(filteredPreset, {
+                    lineWidth: 120,
+                });
+
+                shell.mkdir('-p', dirname(outputPath));
+
+                return fs.writeFile(outputPath, outputPreset);
             }
-
-            const outputPreset = dump(filteredPreset, {
-                lineWidth: 120,
-            });
-
-            shell.mkdir('-p', dirname(outputPath));
-            writeFileSync(outputPath, outputPreset);
-        }
-    }
+        }),
+    );
 
     const tocFilePaths: string[] = walkSync(inputFolderPath, {
         directories: false,
@@ -70,9 +76,11 @@ export function processServiceFiles() {
         ignore,
     });
 
-    for (const path of tocFilePaths) {
-        logger.proc(path);
+    await Promise.all(
+        tocFilePaths.map(async (path) => {
+            logger.proc(path);
 
-        TocService.add(path);
-    }
+            return TocService.add(path);
+        }),
+    );
 }
